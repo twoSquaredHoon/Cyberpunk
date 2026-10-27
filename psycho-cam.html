@@ -1,0 +1,494 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Psycho Cam</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: full-bleed live canvas, HUD readout top-left, control rail along the bottom */
+:root{
+  --void:#0d0812;      /* page ground, a violet-black */
+  --panel:#1a1022e6;   /* control rail glass */
+  --pink:#ff3d8b;      /* psychosis magenta */
+  --cyan:#5ef2ff;      /* cyberware cyan */
+  --amber:#ffd84a;     /* iris glow */
+  --ink:#f4e9ff;       /* text */
+  --dim:#a48fb8;       /* secondary text */
+  --display:"Chakra Petch", "Rajdhani", system-ui, sans-serif;
+  --mono:"JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{height:100%;margin:0;background:var(--void);color:var(--ink);font-family:var(--display);overflow:hidden}
+#stage{position:fixed;inset:0;display:grid;place-items:center}
+#out{width:100%;height:100%;object-fit:contain;display:block}
+video{display:none}
+
+/* HUD */
+#hud{position:fixed;top:calc(14px + env(safe-area-inset-top,0px));left:max(16px,env(safe-area-inset-left,0px));font-family:var(--mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;pointer-events:none;display:grid;gap:6px;text-shadow:0 0 6px #000}
+#hud .row{display:flex;gap:10px;align-items:center}
+#hud .lbl{color:var(--dim)}
+#meter{width:140px;height:6px;background:#ffffff1f;position:relative;overflow:hidden}
+#meter i{position:absolute;inset:0 auto 0 0;width:100%;background:linear-gradient(90deg,var(--pink),var(--cyan));transition:width .1s linear}
+#hum{font-variant-numeric:tabular-nums;color:var(--cyan);min-width:4ch}
+#face{color:var(--amber)}
+#rec{color:var(--pink)}
+
+/* Controls */
+#rail{position:fixed;left:0;right:0;bottom:0;padding-block:12px calc(12px + env(safe-area-inset-bottom,0px));padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));background:var(--panel);backdrop-filter:blur(8px);border-top:1px solid #ff3d8b55;display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center;justify-content:center}
+.seg{display:flex;border:1px solid #ffffff2a}
+.seg button{border:0;border-right:1px solid #ffffff2a}
+.seg button:last-child{border-right:0}
+button{font:700 13px/1 var(--display);letter-spacing:.1em;text-transform:uppercase;color:var(--ink);background:transparent;border:1px solid #ffffff2a;padding:10px 14px;cursor:pointer}
+button[aria-pressed="true"]{background:var(--pink);color:#160812}
+button:hover{border-color:var(--cyan)}
+button:focus-visible,input:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+#burst{border-color:var(--pink);color:var(--pink)}
+#burst.on{background:var(--pink);color:#160812}
+label.sl{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
+input[type=range]{accent-color:var(--pink);width:120px}
+
+/* Start screen */
+#gate{position:fixed;inset:0;display:grid;place-items:center;background:radial-gradient(ellipse at 50% 40%,#3a1240 0%,var(--void) 70%);z-index:5;padding-inline:max(16px,env(safe-area-inset-left,0px))}
+#gate .box{max-width:30rem;display:grid;gap:18px;text-align:left}
+#gate h1{font-size:clamp(40px,9vw,76px);line-height:.9;margin:0;letter-spacing:.02em;text-transform:uppercase;color:var(--ink);text-shadow:3px 0 var(--pink),-3px 0 var(--cyan);text-wrap:balance}
+#gate p{margin:0;color:var(--dim);font-family:var(--mono);font-size:13px;line-height:1.6}
+#go{justify-self:start;font-size:15px;padding:14px 22px;background:var(--pink);color:#160812;border-color:var(--pink)}
+#status{font-family:var(--mono);font-size:12px;color:var(--amber);min-height:1.4em}
+@media (prefers-reduced-motion: reduce){#meter i{transition:none}}
+</style>
+</head>
+<body>
+<div id="stage"><canvas id="out"></canvas></div>
+<video id="cam" playsinline muted></video>
+
+<div id="hud" hidden>
+  <div class="row"><span class="lbl">Humanity</span><div id="meter"><i></i></div><span id="hum">100%</span></div>
+  <div class="row"><span class="lbl">Ocular lock</span><span id="face">searching</span></div>
+  <div class="row" id="recRow" hidden><span id="rec">● rec</span><span id="recT">0:00</span></div>
+</div>
+
+<div id="rail" hidden>
+  <div class="seg" role="group" aria-label="Eye style">
+    <button id="stPsycho" aria-pressed="true">Psychosis</button>
+    <button id="stOptics" aria-pressed="false">Optics</button>
+    <button id="stVisor" aria-pressed="false">Visor</button>
+  </div>
+  <label class="sl" for="inten">Intensity <input id="inten" type="range" min="0" max="1" step="0.01" value="0.6"></label>
+  <label class="sl" for="ghosts">Ghosts <input id="ghosts" type="checkbox" checked></label>
+  <button id="burst" title="Hold, or hold the space bar">Hold to snap</button>
+  <button id="snap">Photo</button>
+  <button id="recBtn">Record</button>
+</div>
+
+<div id="gate">
+  <div class="box">
+    <h1>Psycho Cam</h1>
+    <p>Tracks the exact outline of both eyes and your irises, then splits them into stacked, glitching copies, or bolts a cyberpsycho optic visor over them. Episodes hit at random; hold the space bar to force one.</p>
+    <button id="go">Start camera</button>
+    <div id="status"></div>
+  </div>
+</div>
+
+<script type="module">
+import { FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
+
+const $ = s => document.querySelector(s);
+const out = $("#out"), ctx = out.getContext("2d");
+const video = $("#cam");
+
+// MediaPipe face mesh indices (exact eye contours + iris)
+const R_EYE = [33,7,163,144,145,153,154,155,133,173,157,158,159,160,161,246];
+const L_EYE = [263,249,390,373,374,380,381,382,362,398,384,385,386,387,388,466];
+const EYES = [
+  { contour:R_EYE, iris:468, irisEdge:469, top:159, bot:145, inner:133, outer:33 },
+  { contour:L_EYE, iris:473, irisEdge:474, top:386, bot:374, inner:362, outer:263 },
+];
+const OVAL = [10,338,297,332,284,251,389,356,454,323,361,288,397,365,379,378,400,377,152,148,176,149,150,136,172,58,132,93,234,127,162,21,54,103,67,109];
+
+let landmarker, W = 0, H = 0;
+let style = "psycho", intensity = 0.6, ghostsOn = true, forced = false;
+const mk = () => { const c = document.createElement("canvas"); return [c, c.getContext("2d")]; };
+const [base, bctx] = mk(), [rC, rX] = mk(), [gC, gX] = mk(), [bC, bX] = mk(), [ghost, ghX] = mk();
+
+// smoothed landmarks (pixel space, mirrored)
+let sm = null, hasFace = false, lostAt = 0;
+
+// ---------- setup ----------
+$("#go").onclick = async () => {
+  const st = $("#status");
+  $("#go").disabled = true;
+  try {
+    st.textContent = "Requesting camera…";
+    const stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:"user", width:{ideal:1280}, height:{ideal:720} }, audio:false });
+    video.srcObject = stream; await video.play();
+    st.textContent = "Loading eye tracker…";
+    const files = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
+    const opts = (delegate) => ({
+      baseOptions:{ modelAssetPath:"https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task", delegate },
+      runningMode:"VIDEO", numFaces:1, minFacePresenceConfidence:0.5, minTrackingConfidence:0.5,
+    });
+    try { landmarker = await FaceLandmarker.createFromOptions(files, opts("GPU")); }
+    catch { landmarker = await FaceLandmarker.createFromOptions(files, opts("CPU")); }
+    resize();
+    $("#gate").hidden = true; $("#hud").hidden = false; $("#rail").hidden = false;
+    requestAnimationFrame(loop);
+  } catch (e) {
+    console.error(e);
+    st.textContent = e.name === "NotAllowedError" ? "Camera access was blocked. Allow it in the browser's address bar, then try again."
+      : "Couldn't start: " + (e.message || e) + ". Open this file in Chrome, Edge or Firefox with an internet connection.";
+    $("#go").disabled = false;
+  }
+};
+
+function resize(){
+  const s = Math.min(1, 1280 / video.videoWidth);
+  W = Math.round(video.videoWidth * s); H = Math.round(video.videoHeight * s);
+  for (const c of [out, base, rC, gC, bC, ghost]) { c.width = W; c.height = H; }
+}
+
+// ---------- controls ----------
+const setStyle = s => { style = s; for (const k of ["Psycho","Optics","Visor"]) $("#st"+k).setAttribute("aria-pressed", s === k.toLowerCase()); reroll(performance.now(), true); };
+$("#stPsycho").onclick = () => setStyle("psycho");
+$("#stOptics").onclick = () => setStyle("optics");
+$("#stVisor").onclick = () => setStyle("visor");
+$("#inten").oninput = e => intensity = +e.target.value;
+$("#ghosts").onchange = e => ghostsOn = e.target.checked;
+const burstBtn = $("#burst");
+const setForced = v => { forced = v; burstBtn.classList.toggle("on", v); };
+burstBtn.addEventListener("pointerdown", () => setForced(true));
+for (const ev of ["pointerup","pointerleave","pointercancel"]) burstBtn.addEventListener(ev, () => setForced(false));
+addEventListener("keydown", e => { if (e.code === "Space" && !e.repeat) { e.preventDefault(); setForced(true); } });
+addEventListener("keyup", e => { if (e.code === "Space") setForced(false); });
+
+$("#snap").onclick = () => out.toBlob(b => save(b, `psycho-${Date.now()}.png`), "image/png");
+function save(blob, name){ const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 4000); }
+
+let rec = null, recStart = 0, chunks = [];
+$("#recBtn").onclick = () => {
+  if (rec) { rec.stop(); return; }
+  const types = ["video/mp4;codecs=avc1","video/webm;codecs=vp9","video/webm"];
+  const mimeType = types.find(t => MediaRecorder.isTypeSupported(t)) || "";
+  rec = new MediaRecorder(out.captureStream(30), mimeType ? { mimeType, videoBitsPerSecond:6e6 } : {});
+  chunks = []; rec.ondataavailable = e => e.data.size && chunks.push(e.data);
+  rec.onstop = () => { const t = rec.mimeType || "video/webm"; save(new Blob(chunks, { type:t }), `psycho-${Date.now()}.${t.includes("mp4") ? "mp4" : "webm"}`); rec = null; $("#recRow").hidden = true; $("#recBtn").textContent = "Record"; $("#recBtn").setAttribute("aria-pressed","false"); };
+  rec.start(500); recStart = performance.now();
+  $("#recRow").hidden = false; $("#recBtn").textContent = "Stop"; $("#recBtn").setAttribute("aria-pressed","true");
+};
+
+// ---------- glitch state ----------
+let heat = 0, burstUntil = 0, lastT = 0, nextRoll = 0, rolls = [[],[]], sliceSeed = [];
+const rnd = (a, b) => a + Math.random() * (b - a);
+
+function reroll(now, burst){
+  // per-copy offsets regenerate in jumps, so copies snap instead of drifting
+  for (let e = 0; e < 2; e++) {
+    const arr = [], baseAng = rnd(-Math.PI, Math.PI);
+    for (let i = 0; i < 8; i++) arr.push({
+      ang: style === "optics" ? (Math.random() < .5 ? 0 : Math.PI) + rnd(-.25,.25) : baseAng + rnd(-.9,.9),
+      dist: (i + rnd(.3, 1)) , rot: rnd(-.35,.35), scale: rnd(.9, 1.18),
+    });
+    rolls[e] = arr;
+  }
+  nextRoll = now + (burst ? rnd(60, 160) : rnd(450, 900));
+}
+
+// ---------- main loop ----------
+function loop(now){
+  requestAnimationFrame(loop);
+  if (video.readyState < 2) return;
+  if (video.videoWidth && Math.round(video.videoWidth * Math.min(1, 1280/video.videoWidth)) !== W) resize();
+  const dt = Math.min(0.1, (now - (lastT || now)) / 1000); lastT = now;
+
+  // mirrored frame
+  bctx.setTransform(-1,0,0,1,W,0); bctx.drawImage(video, 0, 0, W, H); bctx.setTransform(1,0,0,1,0,0);
+
+  // landmarks
+  const res = landmarker.detectForVideo(video, now);
+  const lm = res.faceLandmarks && res.faceLandmarks[0];
+  if (lm) {
+    if (!sm || !hasFace) { sm = new Float32Array(lm.length * 2); for (let i = 0; i < lm.length; i++) { sm[i*2] = (1 - lm[i].x) * W; sm[i*2+1] = lm[i].y * H; } }
+    else for (let i = 0; i < lm.length; i++) { const k = .6; sm[i*2] += ((1 - lm[i].x) * W - sm[i*2]) * k; sm[i*2+1] += (lm[i].y * H - sm[i*2+1]) * k; }
+    hasFace = true;
+  } else if (hasFace) { hasFace = false; lostAt = now; }
+
+  // episode timing: random bursts, more often at higher intensity
+  const bursting = forced || now < burstUntil;
+  if (!bursting && hasFace && Math.random() < dt * (0.08 + intensity * 0.45)) burstUntil = now + rnd(350, 1100);
+  heat += ((bursting ? 1 : 0) - heat) * Math.min(1, dt * (bursting ? 14 : 2.5));
+  if (now > nextRoll) reroll(now, bursting);
+  const g = Math.min(1, intensity * (0.35 + heat));
+
+  // 1. base frame, RGB split during episodes
+  ctx.globalCompositeOperation = "source-over"; ctx.globalAlpha = 1;
+  if (heat > 0.25) rgbSplit(2 + g * 18 * heat);
+  else ctx.drawImage(base, 0, 0);
+
+  if (hasFace) {
+    if (ghostsOn && heat > 0.12) drawGhosts(g);
+    if (style === "visor") drawVisor(g, now);
+    else for (let e = 0; e < 2; e++) drawEye(EYES[e], rolls[e], g, now);
+  }
+
+  // 2. horizontal slice tearing
+  if (heat > 0.4) {
+    const n = Math.round(2 + 8 * g * heat);
+    for (let i = 0; i < n; i++) {
+      const y = Math.random() * H, h = rnd(4, 40) * (0.5 + g), dx = rnd(-1, 1) * 60 * g * heat;
+      ctx.drawImage(out, 0, y, W, h, dx, y, W, h);
+    }
+  }
+  // datamosh: smear thin columns sideways into streaks, and shove blocks out of place
+  if (heat > 0.3) {
+    const n = Math.round((style === "visor" ? 6 : 3) + 14 * g * heat);
+    for (let i = 0; i < n; i++) {
+      const y = Math.random() * H, h = rnd(3, 22), sx = Math.random() * W;
+      const len = rnd(40, 260) * (0.5 + g), x0 = Math.random() < .5 ? sx : sx - len;
+      ctx.drawImage(out, sx, y, 2, h, x0, y, len, h);
+    }
+    for (let i = 0; i < Math.round(4 * g * heat); i++) {
+      const bw = rnd(30, 140), bh = rnd(10, 60), x = Math.random() * W, y = Math.random() * H;
+      ctx.drawImage(out, x, y, bw, bh, x + rnd(-40, 40), y + rnd(-8, 8), bw, bh);
+    }
+  }
+
+  // 3. color grade toward the anime palette
+  if (style === "visor") {
+    // split rim light: cyan from screen-left, hot orange-red from screen-right
+    const lg = ctx.createLinearGradient(0, 0, W, 0);
+    lg.addColorStop(0, "#14e4ff"); lg.addColorStop(.42, "rgba(60,90,200,0)"); lg.addColorStop(.58, "rgba(200,60,60,0)"); lg.addColorStop(1, "#ff4a1c");
+    ctx.globalCompositeOperation = "soft-light"; ctx.globalAlpha = 0.75; ctx.fillStyle = lg; ctx.fillRect(0, 0, W, H);
+    ctx.globalCompositeOperation = "multiply"; ctx.globalAlpha = 0.35; ctx.fillStyle = "#4a5aa8"; ctx.fillRect(0, 0, W, H);
+    drawRain(dt);
+  } else {
+    ctx.globalCompositeOperation = "soft-light";
+    ctx.globalAlpha = style === "psycho" ? 0.25 + 0.4 * heat * intensity : 0.15 + 0.3 * heat * intensity;
+    ctx.fillStyle = style === "psycho" ? "#ff4f9a" : "#ff3b2f"; ctx.fillRect(0, 0, W, H);
+    ctx.globalCompositeOperation = "multiply"; ctx.globalAlpha = 0.18 + 0.15 * heat;
+    ctx.fillStyle = style === "psycho" ? "#6a4cff" : "#2fd8e6"; ctx.fillRect(0, 0, W, H);
+  }
+  // optic glow goes on after grading so the red stays hot
+  if (glowQueue.length) { drawGlows(); glowQueue.length = 0; }
+  // scanlines
+  ctx.globalCompositeOperation = "source-over"; ctx.globalAlpha = 0.06 + 0.1 * heat; ctx.fillStyle = "#000";
+  for (let y = (now / 40 | 0) % 4; y < H; y += 4) ctx.fillRect(0, y, W, 1);
+  ctx.globalAlpha = 1;
+
+  // HUD
+  const humanity = Math.max(0, Math.round(100 - heat * 70 * (0.4 + intensity)));
+  $("#hum").textContent = humanity + "%"; $("#meter i").style.width = humanity + "%";
+  $("#face").textContent = hasFace ? (heat > .5 ? "unstable" : "locked") : "searching";
+  if (rec) { const s = (now - recStart) / 1000 | 0; $("#recT").textContent = `${s/60|0}:${String(s%60).padStart(2,"0")}`; }
+}
+
+function rgbSplit(sh){
+  const chan = (c, x, col) => { x.globalCompositeOperation = "copy"; x.drawImage(base, 0, 0); x.globalCompositeOperation = "multiply"; x.fillStyle = col; x.fillRect(0, 0, W, H); };
+  chan(rC, rX, "#f00"); chan(gC, gX, "#0f0"); chan(bC, bX, "#00f");
+  ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H);
+  ctx.globalCompositeOperation = "lighter";
+  const j = rnd(-1, 1) * sh * .3;
+  ctx.drawImage(rC, sh, j); ctx.drawImage(gC, 0, 0); ctx.drawImage(bC, -sh, -j);
+  ctx.globalCompositeOperation = "source-over";
+}
+
+const P = i => [sm[i*2], sm[i*2+1]];
+const dist = (a, b) => Math.hypot(a[0]-b[0], a[1]-b[1]);
+
+function drawGhosts(g){
+  let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+  for (const i of OVAL) { const [x, y] = P(i); x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+  const fw = x1 - x0, fh = y1 - y0, pad = fw * .25;
+  x0 -= pad; y0 -= pad; const bw = fw + pad * 2, bh = fh + pad * 2;
+  ghX.globalCompositeOperation = "copy";
+  ghX.drawImage(base, x0, y0, bw, bh, 0, 0, bw, bh);
+  ghX.globalCompositeOperation = "destination-in";
+  const gr = ghX.createRadialGradient(bw/2, bh/2, Math.min(bw,bh)*.2, bw/2, bh/2, Math.max(bw,bh)*.55);
+  gr.addColorStop(0, "#000"); gr.addColorStop(1, "#0000");
+  ghX.fillStyle = gr; ghX.fillRect(0, 0, bw, bh);
+  ctx.globalCompositeOperation = "screen"; ctx.globalAlpha = Math.min(.6, heat * .55);
+  const off = fw * (0.32 + 0.25 * g);
+  for (const s of [-1, 1]) ctx.drawImage(ghost, 0, 0, bw, bh, x0 + s * off + rnd(-6,6)*g, y0 + rnd(-6,6)*g, bw, bh);
+  ctx.globalCompositeOperation = "source-over"; ctx.globalAlpha = 1;
+}
+
+function eyePath(pts, wob){
+  ctx.beginPath();
+  // smooth closed curve through the exact contour points
+  const n = pts.length, q = pts.map(p => [p[0] + rnd(-wob, wob), p[1] + rnd(-wob, wob)]);
+  ctx.moveTo((q[n-1][0] + q[0][0]) / 2, (q[n-1][1] + q[0][1]) / 2);
+  for (let i = 0; i < n; i++) { const a = q[i], b = q[(i+1) % n]; ctx.quadraticCurveTo(a[0], a[1], (a[0]+b[0])/2, (a[1]+b[1])/2); }
+  ctx.closePath();
+}
+
+function drawEye(E, roll, g, now){
+  const pts = E.contour.map(P);
+  const inner = P(E.inner), outer = P(E.outer), ew = dist(inner, outer);
+  const open = dist(P(E.top), P(E.bot)) / ew;
+  const c = [(inner[0] + outer[0]) / 2, (inner[1] + outer[1]) / 2];
+  const ic = P(E.iris), ir = Math.max(2, dist(ic, P(E.irisEdge)));
+  const copies = Math.round(1 + intensity * 3 + heat * 3);
+  const spread = ew * (0.12 + 0.3 * g + 0.25 * heat);
+  const jit = ew * 0.05 * heat * intensity;
+  const lw = Math.max(1.5, ew * 0.035);
+
+  for (let i = copies; i >= 0; i--) {
+    const r = roll[Math.min(i, roll.length - 1)];
+    const d = i === 0 ? 0 : r.dist * spread;
+    const dx = Math.cos(r.ang) * d + rnd(-jit, jit), dy = Math.sin(r.ang) * d + rnd(-jit, jit);
+    const rot = i === 0 ? 0 : r.rot * g, sc = i === 0 ? 1 : 1 + (r.scale - 1) * g;
+    ctx.save();
+    ctx.translate(c[0] + dx, c[1] + dy); ctx.rotate(rot); ctx.scale(sc, sc); ctx.translate(-c[0], -c[1]);
+    ctx.globalAlpha = i === 0 ? 1 : Math.max(.35, 1 - i * .12);
+    if (style === "psycho") psychoEye(pts, ic, ir, open, lw, g);
+    else opticsEye(pts, ic, ir, open, lw, g, i === 0);
+    ctx.restore();
+  }
+}
+
+function psychoEye(pts, ic, ir, open, lw, g){
+  const wob = lw * .4 * heat;
+  eyePath(pts, wob);
+  ctx.save(); ctx.clip();
+  ctx.drawImage(base, 0, 0);                           // your real eye pixels
+  ctx.fillStyle = `rgba(150,165,255,${0.35 + 0.35 * g})`; // pale blue sclera wash
+  ctx.fillRect(0, 0, W, H);
+  if (open > 0.14) {                                   // glowing pupil
+    const gr = ctx.createRadialGradient(ic[0], ic[1], 0, ic[0], ic[1], ir * 1.6);
+    gr.addColorStop(0, "#fffde8"); gr.addColorStop(.35, "#ffe066"); gr.addColorStop(.6, "rgba(255,200,60,.55)"); gr.addColorStop(1, "rgba(255,200,60,0)");
+    ctx.fillStyle = gr; ctx.beginPath(); ctx.arc(ic[0], ic[1], ir * 1.6, 0, 7); ctx.fill();
+  }
+  ctx.restore();
+  eyePath(pts, wob);
+  ctx.lineJoin = "round"; ctx.lineWidth = lw; ctx.strokeStyle = "#1b0f2e"; ctx.stroke();
+}
+
+function opticsEye(pts, ic, ir, open, lw, g, main){
+  const R = ir * 2.3;
+  // real eye underneath, tinted red
+  eyePath(pts, 0); ctx.save(); ctx.clip(); ctx.drawImage(base, 0, 0);
+  ctx.fillStyle = "rgba(255,60,40,.35)"; ctx.fillRect(0, 0, W, H); ctx.restore();
+  // lens disc
+  ctx.beginPath(); ctx.arc(ic[0], ic[1], R, 0, 7);
+  const gr = ctx.createRadialGradient(ic[0] - R*.3, ic[1] - R*.3, R*.1, ic[0], ic[1], R);
+  gr.addColorStop(0, "rgba(255,150,110,.75)"); gr.addColorStop(1, "rgba(235,50,35,.65)");
+  ctx.fillStyle = gr; ctx.fill();
+  ctx.lineWidth = lw * 1.1; ctx.strokeStyle = "#2a0a0e"; ctx.stroke();
+  if (open > 0.12) {
+    ctx.beginPath(); ctx.arc(ic[0], ic[1], ir * .75, 0, 7); ctx.lineWidth = lw * .8; ctx.stroke();
+    ctx.beginPath(); ctx.arc(ic[0], ic[1], ir * .3, 0, 7); ctx.fillStyle = "#3a0a10"; ctx.fill();
+  }
+  if (main) {  // metal housing + pink contact nubs
+    ctx.beginPath(); ctx.arc(ic[0], ic[1], R * 1.12, Math.PI * .65, Math.PI * 1.55);
+    ctx.lineWidth = lw * 1.8; ctx.strokeStyle = "#c9c7d6"; ctx.stroke();
+    ctx.fillStyle = "#ff7ad9";
+    for (const a of [-.3, .5]) { ctx.beginPath(); ctx.arc(ic[0] + Math.cos(a) * R * 1.1, ic[1] + Math.sin(a) * R * 1.1, lw * 1.1, 0, 7); ctx.fill(); }
+  }
+  // highlight
+  ctx.beginPath(); ctx.arc(ic[0] - R*.4, ic[1] - R*.45, R*.12, 0, 7); ctx.fillStyle = "rgba(255,255,255,.7)"; ctx.fill();
+}
+
+// ---------- Visor: black optic plates with three red lenses per eye ----------
+const glowQueue = [];
+const PLATE = [[-0.28,-0.12],[0.25,-0.46],[0.9,-0.42],[1.42,-0.08],[1.25,0.34],[0.72,0.58],[0.12,0.48],[-0.24,0.22]];
+
+function eyeFrame(E){
+  const I = P(E.inner), O = P(E.outer), ew = dist(I, O);
+  const u = [(O[0]-I[0])/ew, (O[1]-I[1])/ew];
+  let n = [-u[1], u[0]]; if (n[1] < 0) n = [-n[0], -n[1]];        // n always points toward the chin
+  const L = (a, b) => [I[0] + (u[0]*a + n[0]*b) * ew, I[1] + (u[1]*a + n[1]*b) * ew];
+  // where the iris sits along the eye, in the same local units
+  const ic = P(E.iris), d = [ic[0]-I[0], ic[1]-I[1]];
+  const ia = (d[0]*u[0] + d[1]*u[1]) / ew, ib = (d[0]*n[0] + d[1]*n[1]) / ew;
+  return { I, O, ew, L, ia, ib, ir: Math.max(2, dist(ic, P(E.irisEdge))), cx: (I[0]+O[0])/2 };
+}
+
+function drawVisor(g, now){
+  const F = EYES.map(eyeFrame);
+  const jit = () => rnd(-1, 1) * F[0].ew * 0.04 * heat * intensity;
+  ctx.save();
+  ctx.translate(jit(), jit());
+  ctx.lineJoin = "round";
+
+  // nose bridge piece joining the two plates
+  const br = P(168), bw = F[0].ew * 0.16;
+  ctx.beginPath();
+  ctx.moveTo(...F[0].L(-0.28,-0.12)); ctx.lineTo(br[0], br[1] - bw * .6); ctx.lineTo(...F[1].L(-0.28,-0.12));
+  ctx.lineTo(...F[1].L(-0.24,0.22)); ctx.lineTo(br[0], br[1] + bw); ctx.lineTo(...F[0].L(-0.24,0.22)); ctx.closePath();
+  ctx.fillStyle = "#151827"; ctx.fill(); ctx.lineWidth = Math.max(1.5, F[0].ew * .03); ctx.strokeStyle = "#05060c"; ctx.stroke();
+
+  for (const f of F) {
+    const pts = PLATE.map(([a, b]) => f.L(a, b));
+    const lw = Math.max(1.5, f.ew * 0.035);
+    // plate body
+    ctx.beginPath(); pts.forEach((p, i) => i ? ctx.lineTo(...p) : ctx.moveTo(...p)); ctx.closePath();
+    const top = f.L(0.5, -0.45), bot = f.L(0.5, 0.58);
+    const pg = ctx.createLinearGradient(top[0], top[1], bot[0], bot[1]);
+    pg.addColorStop(0, "#2a3048"); pg.addColorStop(.5, "#141726"); pg.addColorStop(1, "#090a12");
+    ctx.fillStyle = pg; ctx.fill();
+    ctx.lineWidth = lw; ctx.strokeStyle = "#04050a"; ctx.stroke();
+    // rim light along the upper edge, colored by which side of the screen it faces
+    const leftSide = f.cx < W / 2;
+    ctx.beginPath(); ctx.moveTo(...pts[0]); ctx.lineTo(...pts[1]); ctx.lineTo(...pts[2]); ctx.lineTo(...pts[3]);
+    ctx.lineWidth = lw * .7; ctx.strokeStyle = leftSide ? "rgba(80,235,255,.85)" : "rgba(255,110,60,.85)"; ctx.stroke();
+    // panel seam
+    ctx.beginPath(); ctx.moveTo(...f.L(0.05, 0.05)); ctx.lineTo(...f.L(1.15, 0.12));
+    ctx.lineWidth = lw * .4; ctx.strokeStyle = "rgba(0,0,0,.6)"; ctx.stroke();
+
+    // three lenses: big one rides your real iris, two small ones toward the nose
+    const R = f.ir * 1.2;
+    const lenses = [
+      [f.L(f.ia, f.ib), R],
+      [f.L(f.ia - 0.42, f.ib - 0.2), R * .62],
+      [f.L(f.ia - 0.18, f.ib + 0.32), R * .52],
+    ];
+    for (const [c, r] of lenses) {
+      // socket
+      ctx.beginPath(); ctx.arc(c[0], c[1], r * 1.45, 0, 7); ctx.fillStyle = "#06070d"; ctx.fill();
+      ctx.lineWidth = lw * .5; ctx.strokeStyle = "#3a4058"; ctx.stroke();
+      glowQueue.push([c, r]);
+    }
+  }
+  ctx.restore();
+  glowQueue.flick = heat > .4 && Math.random() < .25 * heat ? 0.25 : 0.85 + 0.15 * Math.sin(now / 70);
+}
+
+function drawGlows(){
+  const k = glowQueue.flick ?? 1;
+  for (const [c, r] of glowQueue) {
+    // lens body
+    const lg = ctx.createRadialGradient(c[0] - r*.2, c[1] - r*.2, r*.05, c[0], c[1], r);
+    lg.addColorStop(0, `rgba(255,170,170,${k})`); lg.addColorStop(.45, `rgba(255,40,70,${k})`); lg.addColorStop(1, `rgba(110,0,20,${k})`);
+    ctx.globalCompositeOperation = "source-over"; ctx.globalAlpha = 1;
+    ctx.beginPath(); ctx.arc(c[0], c[1], r, 0, 7); ctx.fillStyle = lg; ctx.fill();
+    // bloom
+    ctx.globalCompositeOperation = "lighter";
+    const bg = ctx.createRadialGradient(c[0], c[1], r * .5, c[0], c[1], r * 3.2);
+    bg.addColorStop(0, `rgba(255,40,70,${.55 * k})`); bg.addColorStop(1, "rgba(255,40,70,0)");
+    ctx.fillStyle = bg; ctx.beginPath(); ctx.arc(c[0], c[1], r * 3.2, 0, 7); ctx.fill();
+    // specular dots
+    ctx.globalCompositeOperation = "source-over";
+    ctx.fillStyle = "rgba(255,255,255,.9)"; ctx.beginPath(); ctx.arc(c[0] - r*.35, c[1] - r*.35, r*.2, 0, 7); ctx.fill();
+    ctx.fillStyle = "rgba(120,240,255,.8)"; ctx.beginPath(); ctx.arc(c[0] + r*.38, c[1] + r*.3, r*.1, 0, 7); ctx.fill();
+  }
+  ctx.globalCompositeOperation = "source-over"; ctx.globalAlpha = 1;
+}
+
+let drops = [];
+function drawRain(dt){
+  if (!drops.length) drops = Array.from({ length: 140 }, () => ({ x: Math.random() * W, y: Math.random() * H, l: rnd(10, 30), v: rnd(700, 1200) }));
+  ctx.globalCompositeOperation = "screen"; ctx.globalAlpha = 0.22;
+  ctx.strokeStyle = "#cfe6ff"; ctx.lineWidth = 1; ctx.beginPath();
+  for (const d of drops) {
+    d.y += d.v * dt; d.x += d.v * dt * .05;
+    if (d.y > H) { d.y = -d.l; d.x = Math.random() * W; }
+    ctx.moveTo(d.x, d.y); ctx.lineTo(d.x + d.l * .05, d.y + d.l);
+  }
+  ctx.stroke();
+  ctx.globalCompositeOperation = "source-over"; ctx.globalAlpha = 1;
+}
+</script>
+</body>
+</html>
